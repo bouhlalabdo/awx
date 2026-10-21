@@ -1,0 +1,9 @@
+---
+- name: Créer le dossier test sur D:
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Créer le dossier
+      ansible.windows.win_file:
+        path: D:\\test\\test1
+        state: directory
