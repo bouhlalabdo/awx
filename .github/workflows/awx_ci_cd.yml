@@ -1,0 +1,60 @@
+name: Déploiement via AWX
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  awx:
+    runs-on: [self-hosted, windows]
+
+    env:
+      AWX_URL: ${{ secrets.AWX_URL }}
+      AWX_TOKEN: ${{ secrets.AWX_TOKEN }}
+      TEMPLATE_ID: "9"
+      # Sur une PR, github.sha est le commit de fusion : on prend le vrai commit
+      COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MODE: ${{ github.event_name == 'pull_request' && 'check' || 'run' }}
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Lancer le job AWX et attendre la fin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{ Authorization = "Bearer $env:AWX_TOKEN" }
+
+          $payload = @{
+            extra_vars = @{ version = $env:COMMIT_SHA }
+            job_type   = $env:MODE
+          } | ConvertTo-Json
+
+          Write-Host "Lancement du template $env:TEMPLATE_ID (mode $env:MODE) pour $env:COMMIT_SHA"
+
+          $lancement = Invoke-RestMethod -Method Post `
+            -Uri "$env:AWX_URL/api/v2/job_templates/$env:TEMPLATE_ID/launch/" `
+            -Headers $headers -ContentType "application/json" -Body $payload
+
+          if ($lancement.ignored_fields -and $lancement.ignored_fields.PSObject.Properties.Count -gt 0) {
+            Write-Warning "Champs ignorés par AWX : $($lancement.ignored_fields | ConvertTo-Json -Compress)"
+          }
+
+          $jobId = $lancement.id
+          Write-Host "Job AWX $jobId : $env:AWX_URL/#/jobs/playbook/$jobId/output"
+
+          do {
+            Start-Sleep -Seconds 5
+            $job = Invoke-RestMethod -Uri "$env:AWX_URL/api/v2/jobs/$jobId/" -Headers $headers
+            Write-Host "Statut : $($job.status)"
+          } while ($job.status -in @("new","pending","waiting","running"))
+
+          Write-Host "----- Sortie du job -----"
+          Invoke-RestMethod -Uri "$env:AWX_URL/api/v2/jobs/$jobId/stdout/?format=txt" -Headers $headers
+
+          if ($job.status -ne "successful") {
+            throw "Le job AWX s'est terminé avec le statut : $($job.status)"
+          }
