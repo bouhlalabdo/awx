@@ -1,5 +1,5 @@
 ---
-- name: Créer le dossier test sur D:
+- name: Créer le dossier test sur D
   hosts: all
   gather_facts: false
   tasks:
